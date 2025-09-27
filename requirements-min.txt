@@ -1,0 +1,2 @@
+# Minimal dependencies for data generation and scripts that only use stdlib.
+# Intentionally left empty.

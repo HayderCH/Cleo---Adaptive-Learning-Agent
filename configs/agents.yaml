@@ -1,0 +1,56 @@
+meta:
+  version: 0.1
+  profile: "option-A"
+
+policy:
+  target_success_band: [0.70, 0.85]
+  bloom_target:
+    Remember: 0.20
+    Understand: 0.25
+    Apply: 0.20
+    Analyze: 0.15
+    Evaluate: 0.10
+    Create: 0.10
+  hysteresis:
+    min_consistent_events: 2
+    plan_update_cooldown_questions: 3
+
+difficulty:
+  min: 0.30
+  max: 0.75
+  utility_weights:
+    mastery_gain: 0.45
+    discrimination: 0.30
+    bloom_balance: 0.15
+    novelty: 0.10
+    risk_penalty: 0.35
+
+spacing:
+  base_interval_hours: 12
+  stability_factor_init: 1.0
+  review_threshold_mastery: 0.65
+  success_boost: 1.3
+  failure_decay: 0.7
+
+attention:
+  latency_z_threshold: 1.0
+  error_streak_threshold: 2
+  hint_usage_threshold: 0.4
+  overload_loadindex_threshold: 0.75
+
+quality_gate:
+  enable_nli_check: true
+  allow_duplicate_rate: 0.05
+  hallucination_max_rate: 0.02
+  readability_grade_max: 13
+  banned_claim_patterns:
+    - "guarantees global minimum"
+    - "always converges faster"
+
+telemetry:
+  log_events:
+    - RESPONSE_RAW
+    - DIAGNOSTIC_EVENT
+    - STRATEGY_UPDATE
+    - QUALITY_REPORT
+  pii_policy: "pseudonymized"

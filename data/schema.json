@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ALC-EDU-Emo Sample",
+  "type": "object",
+  "properties": {
+    "sample_id": { "type": "string" },
+    "segment": {
+      "type": "object",
+      "properties": {
+        "segment_id": { "type": "string" },
+        "topic": { "type": "string" },
+        "text": { "type": "string" },
+        "concepts": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["segment_id", "text"]
+    },
+    "question": {
+      "type": "object",
+      "properties": {
+        "question_id": { "type": "string" },
+        "bloom": { "type": "string", "enum": ["Remember","Understand","Apply","Analyze","Evaluate","Create"] },
+        "type": { "type": "string" },
+        "stem": { "type": "string" },
+        "answer_key": { "type": "string" },
+        "distractors": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["question_id","bloom","stem","answer_key"]
+    },
+    "response": {
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "correct": { "type": "boolean" },
+        "user_answer": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+        "latency_ms": { "type": "number" },
+        "hint_used": { "type": "boolean" }
+      },
+      "required": ["user_id","correct","latency_ms"]
+    },
+    "affect": {
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["Frustration","Demotivation","Stress","Neutral"] }
+        },
+        "valence": { "type": "number", "minimum": -1, "maximum": 1 },
+        "arousal": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string", "enum": ["self_report","text_model","interaction_model"] }
+      }
+    },
+    "derived_signals": {
+      "type": "object",
+      "properties": {
+        "latency_z": { "type": "number" },
+        "error_streak": { "type": "integer" },
+        "novelty_score": { "type": "number" }
+      }
+    },
+    "intervention": {
+      "type": "object",
+      "properties": {
+        "recommended": { "type": "string", "enum": ["Break","Encouragement","Clarify","EasierTask","ConfidenceProbe","None"] },
+        "accepted": { "type": "boolean" }
+      }
+    },
+    "consent": {
+      "type": "object",
+      "properties": {
+        "store_free_text": { "type": "boolean" },
+        "store_audio": { "type": "boolean" }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "properties": {
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    }
+  },
+  "required": ["sample_id","segment","question","response"]
+}

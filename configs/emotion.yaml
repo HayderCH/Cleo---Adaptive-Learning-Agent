@@ -1,0 +1,42 @@
+model:
+  text_emotion_model: "goemotions-finetune"
+  multi_label: true
+  threshold:
+    frustration: 0.45
+    demotivation: 0.45
+    stress: 0.45
+  fusion_weights:
+    text: 0.6
+    interaction: 0.4
+
+signals:
+  latency_z_threshold: 1.0
+  error_streak_threshold: 2
+  hint_usage_threshold: 0.4
+
+policy:
+  interventions:
+    high_frustration:
+      trigger: "frustration_prob >= 0.6 OR (latency_z>1.2 AND error_streak>=2)"
+      actions:
+        - "insert_break(60-120s)"
+        - "deliver_tip('Normaliser la difficulté; proposer un mini-pas')"
+        - "lower_difficulty_delta(0.05)"
+    demotivation:
+      trigger: "demotivation_prob >= 0.6"
+      actions:
+        - "goal_reminder('Tu as déjà maîtrisé X, Y—celui-ci s’y rattache')"
+        - "short_success_task('quick win item')"
+    stress_overload:
+      trigger: "stress_prob >= 0.6"
+      actions:
+        - "reduce_block_count"
+        - "breathing_hint('30s box breathing')"
+        - "defer_analyze_tasks(1 cycle)"
+  cooldown_questions: 3
+  max_interventions_per_session: 5
+  tone:
+    style: "empathic-supportive"
+    banned_phrases:
+      - "should be easy"
+      - "obvious"

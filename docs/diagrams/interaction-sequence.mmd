@@ -1,0 +1,30 @@
+sequenceDiagram
+  autonumber
+  participant GEN as Q-Gen (AI)
+  participant UI as UI
+  participant LRN as Learner
+  participant ADP as Adaptivity (Coach+LM)
+  participant SCR as Web Scraper
+  participant FT as Fine-tuning
+
+  SCR->>FT: Subject corpus (web + syllabus)
+  FT-->>GEN: Fine-tuned transformer (domain)
+  Note over SCR,GEN: Offline prep (periodic): scrape → fine-tune → deploy
+
+  ADP->>GEN: Generate question (subject + strategy)
+  GEN-->>UI: Question
+  UI-->>LRN: Show question
+  LRN-->>UI: Answer
+  UI->>ADP: Log response (correctness, time, confidence)
+  Note over UI,ADP: + optional affect\n  - self-report (valence/arousal)\n  - text-inferred (frustration, demotivation)
+  ADP->>ADP: Update model + strategy
+
+  loop Next item
+    ADP->>GEN: Generate next question
+    GEN-->>UI: Question
+    UI-->>LRN: Show
+    LRN-->>UI: Answer
+  UI->>ADP: Log response (+ affect if available)
+  Note over UI,ADP: affect included if captured\n    (self-report or text model)
+    ADP->>ADP: Update
+  end

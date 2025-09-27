@@ -1,0 +1,39 @@
+mindmap
+  root((Sample))
+    segment
+      segment_id
+      topic
+      text
+      concepts[]
+    question
+      question_id
+      bloom
+      type
+      stem
+      answer_key
+      distractors[]
+    response
+      user_id
+      correct
+      user_answer
+      confidence (0-100)
+      latency_ms
+      hint_used
+    affect
+      labels
+      valence (-1..1)
+      arousal (0..1)
+      source
+    derived_signals
+      latency_z
+      error_streak
+      novelty_score
+    intervention
+      recommended
+      accepted
+    consent
+      store_free_text
+      store_audio
+    timestamps
+      created_at (iso8601)
+      updated_at (iso8601)
