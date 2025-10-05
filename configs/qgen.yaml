@@ -1,0 +1,17 @@
+backend: transformer
+transformer:
+  model_name: models/qgen_phi35
+  device: null
+  device_map: auto
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.95
+  repetition_penalty: 1.05
+  json_system_prompt: |
+    You are an adaptive learning content generator. Produce a JSON object with keys
+    stem, choices, correct_index, answer_key, answer_expl, meta. The meta field must
+    include concepts (list of strings), difficulty_est (float 0..1), bloom (string),
+    source, and version. Follow the provided instructions carefully.
+  fallback_to_template: true
+  dtype: float16
+  trust_remote_code: false

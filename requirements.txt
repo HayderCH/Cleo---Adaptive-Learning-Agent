@@ -18,3 +18,5 @@ streamlit==1.38.0
 gradio==4.44.0
 matplotlib==3.9.2
 requests==2.32.3
+pytest==8.3.2
+PyYAML==6.0.2

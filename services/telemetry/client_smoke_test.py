@@ -5,6 +5,8 @@ import uuid
 from typing import Any, Dict
 
 import requests
+import pytest
+from requests.exceptions import RequestException
 
 
 BASE = os.environ.get("TELEMETRY_BASE", "http://127.0.0.1:8000")
@@ -18,12 +20,26 @@ def pretty(resp: requests.Response) -> None:
         print(resp.status_code, resp.text)
 
 
-def test_health() -> None:
-    r = requests.get(f"{BASE}/healthz", timeout=TIMEOUT)
+def _assure_service(base: str) -> None:
+    try:
+        requests.get(f"{base}/healthz", timeout=TIMEOUT)
+    except RequestException as exc:
+        pytest.skip(f"Telemetry service unavailable at {base}: {exc}")
+
+
+@pytest.fixture(scope="module")
+def telemetry_base() -> str:
+    _assure_service(BASE)
+    return BASE
+
+
+def test_health(telemetry_base: str) -> None:
+    r = requests.get(f"{telemetry_base}/healthz", timeout=TIMEOUT)
     pretty(r)
+    assert r.status_code == 200
 
 
-def test_event() -> None:
+def test_event(telemetry_base: str) -> None:
     payload: Dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "type": "RESPONSE_RAW",
@@ -39,11 +55,19 @@ def test_event() -> None:
             "latency_ms": 1200,
         },
     }
-    r = requests.post(f"{BASE}/events", json=payload, timeout=TIMEOUT)
+    try:
+        r = requests.post(
+            f"{telemetry_base}/events",
+            json=payload,
+            timeout=TIMEOUT,
+        )
+    except RequestException as exc:
+        pytest.skip(f"/events unreachable: {exc}")
     pretty(r)
+    assert r.status_code < 500
 
 
-def test_sample() -> None:
+def test_sample(telemetry_base: str) -> None:
     sample: Dict[str, Any] = {
         "segment": {"segment_id": "s1", "text": "Intro to fractions"},
         "question": {
@@ -61,8 +85,16 @@ def test_sample() -> None:
         },
         "affect": {"labels": ["Neutral"], "source": "self_report"},
     }
-    r = requests.post(f"{BASE}/ingest_sample", json=sample, timeout=TIMEOUT)
+    try:
+        r = requests.post(
+            f"{telemetry_base}/ingest_sample",
+            json=sample,
+            timeout=TIMEOUT,
+        )
+    except RequestException as exc:
+        pytest.skip(f"/ingest_sample unreachable: {exc}")
     pretty(r)
+    assert r.status_code < 500
 
 
 if __name__ == "__main__":

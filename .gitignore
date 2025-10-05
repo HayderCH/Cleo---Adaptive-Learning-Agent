@@ -54,8 +54,60 @@ tmp/
 *.local
 
 # Data artifacts (generated at runtime)
-data/raw/*.jsonl
-data/processed/*.jsonl
+data/raw/
+!data/raw/.gitkeep
+data/processed/
+!data/processed/.gitkeep
+data/tmp/
+!data/tmp/.gitkeep
+
+# Synthetic output dumps
+outputs/
+!outputs/.gitkeep
+
+# Model checkpoints and weights
+models/
+!models/.gitkeep
+!models/*/
+!models/*/*/
+!models/**/README.md
+!models/**/README.rst
+!models/**/LICENSE
+!models/**/config.json
+!models/**/tokenizer.json
+!models/**/tokenizer_config.json
+!models/**/special_tokens_map.json
+!models/**/vocab.json
+!models/**/merges.txt
+!models/**/generation_config.json
+!models/**/configuration_*.py
+!models/**/sample_finetune.py
+!models/**/added_tokens.json
+!models/**/NOTICE.md
+!models/**/SECURITY.md
+*.pt
+*.bin
+*.safetensors
+*.onnx
+*.pb
+*.tflite
+training_args.bin
+optimizer.pt
+models/**/pytorch_model-*.bin
+models/**/model-*.safetensors
+models/**/checkpoint-*/
+
+# Hugging Face cache and downloads
+cache/
+.cache/
+~/.cache/
+huggingface/
+hf_cache/
+
+# Local telemetry or run artifacts
+services/**/artifacts/
+services/**/logs/
+telemetry.log
 
 # Generated diagrams (optional exports)
 docs/diagrams/*.png

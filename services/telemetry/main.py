@@ -9,6 +9,9 @@ from typing import Any, Dict, List, Literal, Optional
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from services.attention import AttentionAgent
+from services.emotion import EmotionAgent
+
 
 # Paths
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,13 +25,16 @@ DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
 class EventEnvelope(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: Literal[
+        "QUESTION_SHOWN",
         "RESPONSE_RAW",
+        "RESPONSE_SCORED",
         "DIAGNOSTIC_EVENT",
         "STRATEGY_UPDATE",
         "QUESTION_PLAN",
         "GENERATED_QUESTIONS",
         "REVIEW_TASK",
         "QUALITY_REPORT",
+        "EMOTION_SELF_REPORT",
     ]
     source: Literal[
         "UI",
@@ -138,6 +144,10 @@ class Sample(BaseModel):
 app = FastAPI(title="Telemetry Service", version="0.1.0")
 
 
+ATTENTION = AttentionAgent()
+EMOTION = EmotionAgent()
+
+
 def _append_jsonl(path: Path, obj: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
@@ -154,7 +164,124 @@ def post_event(ev: EventEnvelope) -> Dict[str, Any]:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d")
     out = DATA_RAW / f"events_{ts}.jsonl"
     _append_jsonl(out, ev.model_dump())
-    return {"status": "queued", "file": str(out), "id": ev.id}
+    derived = _update_attention_metrics(ev, out)
+    response: Dict[str, Any] = {
+        "status": "queued",
+        "file": str(out),
+        "id": ev.id,
+    }
+    if derived:
+        response["derived_signals"] = derived
+    return response
+
+
+def _update_attention_metrics(
+    ev: EventEnvelope,
+    out: Path,
+) -> Optional[Dict[str, Any]]:
+    if ev.type != "RESPONSE_SCORED":
+        return None
+
+    payload = ev.payload or {}
+    user_id = payload.get("user_id")
+    latency_ms = payload.get("latency_ms")
+    correctness = payload.get("correctness")
+
+    if user_id is None or latency_ms is None:
+        return None
+
+    try:
+        latency_val = float(latency_ms)
+    except (TypeError, ValueError):
+        return None
+
+    if correctness is not None:
+        try:
+            is_correct = bool(int(correctness))
+        except (TypeError, ValueError):
+            is_correct = bool(correctness)
+    else:
+        is_correct = True
+
+    derived = ATTENTION.update(
+        user_id=user_id,
+        latency_ms=latency_val,
+        correct=is_correct,
+    )
+    latency_z = derived.get("latency_z")
+    error_streak = derived.get("error_streak")
+    sample_size = derived.get("sample_size")
+
+    emotion_state = EMOTION.update(
+        user_id=user_id,
+        correctness=is_correct,
+        confidence=_as_float(payload.get("confidence")),
+        latency_ms=latency_val,
+        latency_z=_as_float(latency_z),
+        error_streak=_as_int(error_streak),
+    )
+
+    diagnostics = {
+        "user_id": user_id,
+        "question_id": payload.get("question_id"),
+        "latency_ms": latency_val,
+        "latency_z": latency_z,
+        "error_streak": error_streak,
+        "sample_size": sample_size,
+        "correctness": bool(is_correct),
+    }
+
+    diag_event = EventEnvelope(
+        type="DIAGNOSTIC_EVENT",
+        source="Attention",
+        payload=diagnostics,
+    )
+    _append_jsonl(out, diag_event.model_dump())
+    emotion_payload = {
+        "user_id": user_id,
+        "question_id": payload.get("question_id"),
+        **emotion_state,
+    }
+    emotion_event = EventEnvelope(
+        type="DIAGNOSTIC_EVENT",
+        source="Emotional",
+        payload=emotion_payload,
+    )
+    _append_jsonl(out, emotion_event.model_dump())
+    return {
+        "attention": diagnostics,
+        "emotion": emotion_payload,
+    }
+
+
+@app.get("/signals/attention/{user_id}")
+def get_attention_snapshot(user_id: str) -> Dict[str, Any]:
+    snapshot = ATTENTION.get_snapshot(user_id)
+    if not snapshot:
+        return {"user_id": user_id, "status": "unknown"}
+    return {"user_id": user_id, "status": "ok", **snapshot}
+
+
+@app.get("/signals/emotion/{user_id}")
+def get_emotion_snapshot(user_id: str) -> Dict[str, Any]:
+    snapshot = EMOTION.get_snapshot(user_id)
+    if not snapshot:
+        return {"user_id": user_id, "status": "unknown"}
+    return {"user_id": user_id, "status": "ok", **snapshot}
+
+
+def _as_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @app.post("/ingest_sample")

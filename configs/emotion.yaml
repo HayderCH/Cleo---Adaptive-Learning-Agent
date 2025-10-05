@@ -1,5 +1,5 @@
 model:
-  text_emotion_model: "goemotions-finetune"
+  text_emotion_model: "models/emotion"
   multi_label: true
   threshold:
     frustration: 0.45
