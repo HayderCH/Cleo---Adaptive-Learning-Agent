@@ -15,3 +15,4 @@ transformer:
   fallback_to_template: true
   dtype: float16
   trust_remote_code: false
+  load_in_8bit: true

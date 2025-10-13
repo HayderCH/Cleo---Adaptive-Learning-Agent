@@ -17,10 +17,45 @@ logger = logging.getLogger(__name__)
 
 _SCORER_BACKEND = os.environ.get("ALC_OPEN_SCORER", "transformer").strip().lower()
 _TRANSFORMER_SCORER: Optional[TransformerQuestionGenerator] = None
+_SEMANTIC_MODEL = None
 
 
 def _normalize(text: str) -> str:
     return " ".join(text.lower().strip().split())
+
+
+def _ensure_semantic_model():
+    """Load semantic model once and cache it."""
+    global _SEMANTIC_MODEL
+    if _SEMANTIC_MODEL is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            _SEMANTIC_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        except ImportError:
+            raise RuntimeError(
+                "sentence-transformers not available for semantic scoring"
+            )
+    return _SEMANTIC_MODEL
+
+
+def semantic_similarity(expected: str, provided: str) -> float:
+    """Better semantic similarity using sentence transformers."""
+    try:
+        model = _ensure_semantic_model()
+
+        # Encode both answers
+        expected_embedding = model.encode(expected, convert_to_tensor=True)
+        provided_embedding = model.encode(provided, convert_to_tensor=True)
+
+        # Calculate cosine similarity
+        from sentence_transformers import util
+
+        similarity_score = util.cos_sim(expected_embedding, provided_embedding).item()
+        return max(0.0, min(1.0, similarity_score))
+    except ImportError:
+        # Fallback to basic similarity if sentence-transformers not available
+        return similarity(expected, provided)
 
 
 def similarity(expected: str, provided: str) -> float:
@@ -143,6 +178,7 @@ def score(
                 exc_info=True,
             )
 
-    sim = similarity(expected_answer or "", learner_answer or "")
+    # Fall back to semantic similarity scoring
+    sim = semantic_similarity(expected_answer or "", learner_answer or "")
     correctness = 1 if sim >= threshold else 0
     return correctness, latency_ms, sim, None

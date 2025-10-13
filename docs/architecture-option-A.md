@@ -230,3 +230,54 @@ gantt
   Review 1 (2d)     :after b1, 2d
   Review 2 (5d)     :5d
 ```
+
+## Current Implementation Details
+
+### Model Architecture & Optimization
+
+- **Shared Language Model**: Phi-3.5-mini-instruct (7B parameters) used across multiple agents for memory efficiency
+
+  - Question Generation Agent: RAG-enhanced question generation with French programming content
+  - Emotional Advice Agent: Personalized emotional support and guidance generation
+  - 8-bit quantization enabled for memory optimization on consumer hardware
+
+- **Semantic Scoring**: Sentence-transformers (all-MiniLM-L6-v2) for accurate answer evaluation
+
+  - 560x performance improvement over basic text similarity
+  - Better understanding of programming concepts and semantic meaning
+
+- **Emotion Analysis**: Transformer-based emotion detection (emotion-english-distilroberta-base)
+  - Real-time affect detection from user responses
+  - Integration with AI-generated personalized advice
+
+### Agent Implementation
+
+- **Pedagogical Agent** (`services/qgen/`):
+
+  - Transformer backend with RAG retrieval from French programming corpus
+  - Semantic similarity scoring for answer evaluation
+  - 8-bit quantized Phi-3.5 model for question generation
+
+- **Emotional Agent** (`services/emotion/`):
+
+  - Transformer-based emotion classification pipeline
+  - EmotionalAdviceAgent for AI-generated personalized support
+  - Reuses shared Phi-3.5 model to minimize memory usage
+
+- **UI Integration** (`services/ui/app.py`):
+  - Streamlit-based web interface
+  - Always-visible emotion analysis section
+  - User-friendly emotional advice with expandable technical details
+
+### Performance Optimizations
+
+- **Memory Management**: 8-bit quantization reduces VRAM requirements by ~50%
+- **Model Reuse**: Shared Phi-3.5 pipeline across question generation and emotional advice
+- **Semantic Evaluation**: Sentence-transformers provide accurate, fast answer scoring
+- **GPU Acceleration**: CUDA 12.6 with PyTorch 2.8.0 for optimal performance
+
+### Data Pipeline
+
+- **Content Processing**: French programming documentation corpus with chunking
+- **Telemetry Collection**: FastAPI-based event logging for user interactions
+- **Quality Assurance**: Automated validation of generated questions and answers

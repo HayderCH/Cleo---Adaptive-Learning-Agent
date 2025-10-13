@@ -20,6 +20,7 @@ from services.emotion import (
     build_emotion_state as _emotion_build_state,
     flatten_predictions as _emotion_flatten_predictions,
 )
+from services.emotion.advice_agent import get_emotional_advice_agent
 from services.emotion.interpreter import EmotionInterpreter
 from services.qgen import generator, quality_gate
 from services.qgen.schemas import GenerateRequest
@@ -449,6 +450,71 @@ def main() -> None:
                 "transformer backend is unavailable."
             )
 
+        # RAG Pipeline Visualization
+        if q.meta.retrieved_chunks and backend_name == "transformer":
+            with st.expander(
+                "🔍 View RAG Pipeline (Retrieval-Augmented Generation)", expanded=False
+            ):
+                st.markdown("### How this question was generated:")
+
+                # Step 1: Input Analysis
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**📝 Step 1: Input Analysis**")
+                    st.markdown(f"**Subject:** {subject}")
+                    st.markdown(
+                        f"**Focus Concepts:** {', '.join(meta.get('target_concepts', focus_concepts))}"
+                    )
+                    st.markdown(f"**Difficulty:** {display_diff:.2f}")
+                    st.markdown(f"**Bloom Level:** {display_bloom.title()}")
+
+                with col2:
+                    st.markdown("**🔎 Step 2: Context Retrieval**")
+                    st.markdown(
+                        f"**Corpus Size:** {len(q.meta.retrieved_chunks)} relevant chunks found"
+                    )
+                    st.markdown(
+                        "**Search Strategy:** Keyword matching with randomization"
+                    )
+
+                # Step 3: Retrieved Context
+                st.markdown("**📚 Step 3: Retrieved Context**")
+                for i, chunk in enumerate(q.meta.retrieved_chunks, 1):
+                    with st.container():
+                        st.markdown(f"**Chunk {i}:**")
+                        # Get the text content from the chunk
+                        chunk_text = chunk.get("text", str(chunk))
+                        # Highlight focus concepts in the chunk
+                        current_target_concepts = meta.get(
+                            "target_concepts", focus_concepts
+                        )
+                        for concept in current_target_concepts:
+                            chunk_text = chunk_text.replace(concept, f"**{concept}**")
+                        st.markdown(chunk_text)
+                        # Show additional metadata if available
+                        if "source" in chunk:
+                            st.caption(f"Source: {chunk['source']}")
+                        st.markdown("---")
+
+                # Step 4: Question Generation
+                st.markdown("**🤖 Step 4: Question Generation**")
+                st.markdown(
+                    "The retrieved context was combined with the focus concepts and fed to the Phi-3.5 language model to generate this question."
+                )
+
+                # Visual flow diagram
+                st.markdown("**🔄 RAG Pipeline Flow:**")
+                st.markdown(
+                    """
+                ```
+                Input Request → Context Retrieval → Relevant Chunks → LLM Generation → Final Question
+                     ↓              ↓                    ↓              ↓              ↓
+                [Subject +      [Search Corpus]    [Filtered Text]   [Phi-3.5]     [MCQ/Open]
+                 Concepts]       [~1000 chunks]     [Top 3 chunks]   [3.8B params]  [JSON output]
+                ```
+                """
+                )
+
         with st.form("answer_form", clear_on_submit=False):
             answer_text = None
             chosen_index = None
@@ -811,55 +877,82 @@ def main() -> None:
         ):
             show_self_report = True
 
+    # Always show emotion analysis section
+    st.markdown("### Emotion Analysis")
     if show_self_report:
         st.warning("We noticed signs of frustration or stress. " "How are you feeling?")
-        user_feeling = st.text_area(
-            "Describe your feelings or thoughts",
-            key="self_report_text",
-        )
-        analyze_clicked = st.button(
-            "Analyze my feelings",
-            key="analyze_feeling_btn",
-        )
-        if analyze_clicked and user_feeling.strip():
-            transformer = get_emotion_transformer()
-            if transformer is None:
-                message = (
-                    "Emotion transformer backend unavailable. Install "
-                    "torch and transformers, then restart the app."
-                )
-                st.session_state["emo_transformer_error"] = message
-                st.error(message)
-                st.stop()
 
-            try:
-                analysis = transformer.analyze(user_feeling)
-            except RuntimeError as exc:
-                message = (
-                    "Failed to run emotion transformer backend. Ensure "
-                    "torch/transformers are installed and accessible."
-                )
-                st.session_state["emo_transformer_error"] = message
-                st.error(message)
-                st.write("Backend detail:", str(exc))
-                st.stop()
+    user_feeling = st.text_area(
+        "Describe your feelings or thoughts",
+        key="self_report_text",
+    )
+    analyze_clicked = st.button(
+        "Analyze my feelings",
+        key="analyze_feeling_btn",
+    )
+    if analyze_clicked and user_feeling.strip():
+        transformer = get_emotion_transformer()
+        if transformer is None:
+            message = (
+                "Emotion transformer backend unavailable. Install "
+                "torch and transformers, then restart the app."
+            )
+            st.session_state["emo_transformer_error"] = message
+            st.error(message)
+            st.stop()
 
-            st.session_state.pop("emo_transformer_error", None)
+        try:
+            analysis = transformer.analyze(user_feeling)
+        except RuntimeError as exc:
+            message = (
+                "Failed to run emotion transformer backend. Ensure "
+                "torch/transformers are installed and accessible."
+            )
+            st.session_state["emo_transformer_error"] = message
+            st.error(message)
+            st.write("Backend detail:", str(exc))
+            st.stop()
 
-            derived_state = analysis.state
-            summary_str = analysis.summary()
-            loop["emotion_state"] = derived_state
-            loop["emotion_summary"] = summary_str
+        st.session_state.pop("emo_transformer_error", None)
 
+        derived_state = analysis.state
+        summary_str = analysis.summary()
+        loop["emotion_state"] = derived_state
+        loop["emotion_summary"] = summary_str
+
+        # Generate personalized emotional advice
+        try:
+            advice_agent = get_emotional_advice_agent()
+            emotional_advice = advice_agent.generate_advice(
+                user_feeling,
+                {
+                    "flattened": analysis.flattened,
+                    "dominant_bucket": analysis.dominant_bucket(),
+                    "state": derived_state,
+                },
+                derived_state,
+            )
+
+            # Show the emotional advice prominently
+            st.success("💙 **Your Emotional Support Guide**")
+            st.write(emotional_advice)
+
+        except Exception as e:
+            st.warning(
+                "Could not generate personalized advice, but your emotions were analyzed successfully."
+            )
+            st.write(f"Debug: Advice generation failed: {e}")
+
+        # Keep debug info in expandable section for developer
+        with st.expander("🔍 Technical Details (Debug Info)"):
             st.write("**Emotion analysis:**", analysis.flattened)
-            st.write("Bucketized probabilities:", derived_state)
+            st.write("**Bucketized probabilities:**", derived_state)
 
             dominant_label = analysis.top_label()
             if dominant_label:
                 label_name, label_score = dominant_label
                 st.write(
-                    "Dominant emotion label: "
-                    f"{label_name.title()} ({label_score:.2f})"
+                    f"**Dominant emotion label:** {label_name.title()} ({label_score:.2f})"
                 )
 
             dominant_bucket = analysis.dominant_bucket()
@@ -867,62 +960,64 @@ def main() -> None:
             if dominant_bucket:
                 bucket_name, bucket_value = dominant_bucket
                 st.write(
-                    "Dominant affect bucket: "
-                    f"{bucket_name.title()} ({bucket_value:.2f})"
+                    f"**Dominant affect bucket:** {bucket_name.title()} ({bucket_value:.2f})"
                 )
                 bucket_note = (
                     f"Self-report dominant affect: {bucket_name} "
                     f"({bucket_value:.2f})"
                 )
 
-            interventions = (
-                _suggest_self_report_interventions(
-                    derived_state,
-                    loop.get("attention_state"),
-                )
-                or []
+        interventions = (
+            _suggest_self_report_interventions(
+                derived_state,
+                loop.get("attention_state"),
             )
+            or []
+        )
 
-            loop["emotion_interventions"] = interventions
-            notes_list: list[str] = []
-            if bucket_note:
-                notes_list.append(bucket_note)
-            if interventions:
-                notes_list.append(
-                    "Interventions suggested: " + "; ".join(interventions)
-                )
-            loop["emotion_notes"] = notes_list
+        loop["emotion_interventions"] = interventions
+        notes_list: list[str] = []
+        if bucket_note:
+            notes_list.append(bucket_note)
+        if interventions:
+            notes_list.append("Interventions suggested: " + "; ".join(interventions))
+        loop["emotion_notes"] = notes_list
 
-            last_result = loop.get("last_result")
-            if isinstance(last_result, dict):
-                last_result["emotion_summary"] = summary_str
-                last_result["emotion_interventions"] = list(interventions)
-                last_result["emotion_notes"] = list(notes_list)
-                last_result["emotion"] = derived_state
+        last_result = loop.get("last_result")
+        if isinstance(last_result, dict):
+            last_result["emotion_summary"] = summary_str
+            last_result["emotion_interventions"] = list(interventions)
+            last_result["emotion_notes"] = list(notes_list)
+            last_result["emotion"] = derived_state
 
-            if loop.get("history"):
-                latest = loop["history"][-1]
-                latest["emotion_summary"] = summary_str
-                latest["emotion_interventions"] = list(interventions)
-                latest["emotion_notes"] = list(notes_list)
-                latest["emotion"] = derived_state
+        if loop.get("history"):
+            latest = loop["history"][-1]
+            latest["emotion_summary"] = summary_str
+            latest["emotion_interventions"] = list(interventions)
+            latest["emotion_notes"] = list(notes_list)
+            latest["emotion"] = derived_state
 
-            if interventions:
-                st.markdown("**Suggested support actions:**")
-                for action in interventions:
-                    st.write(f"- {action}")
+        if interventions:
+            st.markdown("**Suggested support actions:**")
+            for action in interventions:
+                st.write(f"- {action}")
 
-            post_event(
-                "EMOTION_SELF_REPORT",
-                {
-                    "user_id": loop["user_id"],
-                    "text": user_feeling,
-                    "analysis": analysis.raw,
-                    "flattened": analysis.flattened,
-                    "aggregated": derived_state,
-                    "interventions": interventions,
-                },
-            )
+        if notes_list:
+            st.markdown("**Analysis notes:**")
+            for note in notes_list:
+                st.write(f"- {note}")
+
+        post_event(
+            "EMOTION_SELF_REPORT",
+            {
+                "user_id": loop["user_id"],
+                "text": user_feeling,
+                "analysis": analysis.raw,
+                "flattened": analysis.flattened,
+                "aggregated": derived_state,
+                "interventions": interventions,
+            },
+        )
 
     if loop["history"]:
         st.markdown("### Session history")

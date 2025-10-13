@@ -112,3 +112,33 @@ telemetry.log
 # Generated diagrams (optional exports)
 docs/diagrams/*.png
 docs/diagrams/*.svg
+
+# Large evaluation outputs and logs
+*.log
+logs/
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.joblib
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE and editor files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

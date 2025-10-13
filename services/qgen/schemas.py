@@ -32,6 +32,9 @@ class QuestionMeta(BaseModel):
     source: str = "template"
     version: str = "v0"
     origin: Optional[str] = None
+    subject: str = ""
+    # RAG pipeline information
+    retrieved_chunks: Optional[List[dict]] = None
 
 
 class Question(BaseModel):

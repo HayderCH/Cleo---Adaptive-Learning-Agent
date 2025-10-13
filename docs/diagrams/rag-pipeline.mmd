@@ -1,0 +1,37 @@
+flowchart TB
+  subgraph Input[Input Request]
+    A[Subject & Focus Concepts]
+    B[Constraints: Bloom, Difficulty]
+  end
+
+  subgraph Retrieval[Retrieval]
+    C[Search Corpus]
+    D[Score & Rank Chunks]
+    E[Top-K Chunks]
+  end
+
+  subgraph Augment[Augmentation]
+    F[Compose Prompt with Context]
+  end
+
+  subgraph Generation[LLM Generation]
+    G[Phi-3.5 (local)]
+    H[Generate JSON-formatted Question]
+  end
+
+  subgraph Post[Post-processing]
+    I[Parse JSON]
+    J[Quality & Safety Gate]
+    K[Return Question]
+  end
+
+  A --> C
+  B --> F
+  C --> D --> E --> F
+  F --> G --> H --> I --> J --> K
+
+  style Input fill:#f9f,stroke:#333,stroke-width:1px
+  style Retrieval fill:#ffb,stroke:#333,stroke-width:1px
+  style Augment fill:#bbf,stroke:#333,stroke-width:1px
+  style Generation fill:#bfb,stroke:#333,stroke-width:1px
+  style Post fill:#fdd,stroke:#333,stroke-width:1px

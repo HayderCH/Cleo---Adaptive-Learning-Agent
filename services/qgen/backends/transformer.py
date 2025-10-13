@@ -4,9 +4,12 @@ import gc
 import inspect
 import json
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from pathlib import Path
+import os
 
 from services.qgen.backends.base import BaseQuestionGenerator
 from services.qgen.schemas import GenerateRequest, Question, QuestionMeta
@@ -28,6 +31,7 @@ class TransformerConfig:
     dtype: str | None = "float16"
     trust_remote_code: bool = False
     max_attempts: int = 2
+    load_in_8bit: bool = True  # Enable 8-bit quantization to reduce memory usage
 
     def __post_init__(self) -> None:
         # Backwards compatibility for older configs
@@ -39,6 +43,23 @@ class TransformerConfig:
         if legacy and not self.dtype:
             self.dtype = legacy
 
+        # Resolve relative model paths to absolute paths
+        if self.model_name and not self.model_name.startswith(
+            ("http://", "https://", "/")
+        ):
+            # Check if it's a relative path that needs resolving
+            if not os.path.isabs(self.model_name):
+                # Get the project root (assuming this file is in services/qgen/backends/)
+                project_root = Path(__file__).resolve().parents[3]
+                potential_path = project_root / self.model_name
+                if potential_path.exists():
+                    self.model_name = str(potential_path)
+                    logger.info(f"Resolved model path to: {self.model_name}")
+                else:
+                    logger.debug(
+                        f"Model path {potential_path} does not exist, using as-is: {self.model_name}"
+                    )
+
 
 class TransformerQuestionGenerator(BaseQuestionGenerator):
     """Generates questions using a Hugging Face causal language model."""
@@ -46,12 +67,77 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
     _pipeline_lock = threading.Lock()
     _pipeline: Any | None | bool = None
     _device_map_enabled: bool | None = None
+    _corpus_chunks: List[Dict[str, Any]] = []
 
     def __init__(self, config: TransformerConfig) -> None:
         if not config.model_name:
             raise ValueError("Transformer model_name must be provided in config.")
         self.config = config
-        self._logger = logger.getChild(self.__class__.__name__)
+        self._logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        self._load_corpus()
+
+    def _load_corpus(self) -> None:
+        """Load corpus chunks for RAG retrieval."""
+        corpus_dir = Path(__file__).resolve().parents[3] / "data" / "processed"
+        corpus_files = [
+            "chunks_french_20251011.jsonl",  # Our new French chunks
+            "corpus.jsonl",  # Main corpus
+            "corpus_fixed.jsonl",  # Fixed corpus
+        ]
+
+        self._corpus_chunks = []
+        for corpus_file in corpus_files:
+            file_path = corpus_dir / corpus_file
+            if file_path.exists():
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    chunk = json.loads(line)
+                                    self._corpus_chunks.append(chunk)
+                                except json.JSONDecodeError:
+                                    continue
+                    self._logger.info(f"Loaded corpus chunks from {corpus_file}")
+                except Exception as e:
+                    self._logger.warning(
+                        f"Failed to load corpus from {corpus_file}: {e}"
+                    )
+            else:
+                self._logger.debug(f"Corpus file not found: {file_path}")
+
+    def _retrieve_relevant_chunks(
+        self, focus_concepts: List[str], subject: str, max_chunks: int = 3
+    ) -> List[Dict[str, Any]]:
+        """Retrieve relevant chunks using simple keyword matching with randomization."""
+        if not self._corpus_chunks:
+            return []
+
+        import random
+
+        # Create search terms from focus concepts and subject
+        search_terms = [subject.lower()] + [
+            concept.lower() for concept in focus_concepts
+        ]
+
+        # Score chunks based on term matches
+        scored_chunks = []
+        for chunk in self._corpus_chunks:
+            text = chunk.get("text", "").lower()
+            score = 0
+            for term in search_terms:
+                if term in text:
+                    score += 1
+            if score > 0:
+                scored_chunks.append((score, chunk))
+
+        # Sort by score and add some randomization for diversity
+        scored_chunks.sort(key=lambda x: (x[0], random.random()), reverse=True)
+        relevant_chunks = [chunk for _, chunk in scored_chunks[:max_chunks]]
+
+        self._logger.debug(f"Retrieved {len(relevant_chunks)} relevant chunks")
+        return relevant_chunks
 
     def _empty_cuda_cache(self) -> None:
         try:  # pragma: no cover - hardware specific
@@ -87,6 +173,16 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
     ) -> Tuple[Any, str | int | None]:
         if target_device is None:
             return model, None
+
+        # Check if model is already quantized (bitsandbytes) - don't try to move it
+        try:
+            # Check for bitsandbytes quantization attributes
+            if hasattr(model, "quantization_method") or hasattr(model, "_hf_quantizer"):
+                self._logger.debug("Model is quantized, skipping device placement")
+                return model, target_device
+        except Exception:
+            pass  # Continue with normal device placement
+
         try:
             import torch
         except ImportError:  # pragma: no cover - torch missing
@@ -106,9 +202,11 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
 
         try:
             model.to(device)
-        except Exception as exc:  # pragma: no cover - hardware specific
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - hardware specific  # noqa: broad-except
             self._logger.warning(
-                "Unable to place transformer model on %s. Falling back to CPU.",
+                "Unable to place transformer model on %s. " "Falling back to CPU.",
                 target_device,
             )
             self._logger.debug("Model placement failure: %s", exc, exc_info=True)
@@ -188,6 +286,14 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                     model_signature = inspect.signature(
                         AutoModelForCausalLM.from_pretrained
                     )
+
+                    # Add 8-bit quantization if enabled
+                    if (
+                        self.config.load_in_8bit
+                        and "load_in_8bit" in model_signature.parameters
+                    ):
+                        model_kwargs["load_in_8bit"] = True
+                        model_kwargs["device_map"] = "auto"
                     if dtype is not None:
                         if "dtype" in model_signature.parameters:
                             model_kwargs["dtype"] = dtype
@@ -243,7 +349,9 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                         tokenizer=tokenizer,
                         **pipe_kwargs,
                     )
-                except Exception as exc:  # pragma: no cover - init failures
+                except (
+                    Exception
+                ) as exc:  # pragma: no cover - init failures  # noqa: broad-except
                     self._pipeline = False
                     self._logger.exception(
                         "Unable to initialize transformer model %s",
@@ -261,15 +369,22 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
 
     def _run_pipeline(self, prompt: str) -> List[Dict[str, Any]]:
         def _invoke(gen: Any) -> List[Dict[str, Any]]:
-            return gen(
-                prompt,
-                max_new_tokens=self.config.max_new_tokens,
-                temperature=self.config.temperature,
-                top_p=self.config.top_p,
-                repetition_penalty=self.config.repetition_penalty,
-                num_return_sequences=1,
-                return_full_text=False,
-            )
+            generation_kwargs = {
+                "max_new_tokens": self.config.max_new_tokens,
+                "temperature": self.config.temperature,
+                "repetition_penalty": self.config.repetition_penalty,
+                "num_return_sequences": 1,
+                "return_full_text": False,
+            }
+
+            # Enable sampling if temperature > 0
+            if self.config.temperature > 0:
+                generation_kwargs["do_sample"] = True
+                generation_kwargs["top_p"] = self.config.top_p
+            else:
+                generation_kwargs["do_sample"] = False
+
+            return gen(prompt, **generation_kwargs)
 
         generator = self._ensure_pipeline()
         try:
@@ -285,11 +400,11 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                 try:
                     generator = self._ensure_pipeline(use_device_map=False)
                     return _invoke(generator)
-                except Exception as retry_exc:
+                except Exception as retry_exc:  # noqa: broad-except
                     if self._is_meta_device_error(retry_exc):
                         self._logger.error(
-                            "Transformer still reported meta-device tensors after GPU reload; "
-                            "falling back to CPU execution.",
+                            "Meta-device error persisted after GPU reload; "
+                            "falling back to CPU.",
                         )
                         self._reset_pipeline(device_map_enabled=False)
                         generator = self._ensure_pipeline(
@@ -302,7 +417,7 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                             Exception
                         ) as cpu_exc:  # pragma: no cover - pipeline errors
                             raise RuntimeError(
-                                "Transformer generation failed after CPU fallback."
+                                "Generation failed after CPU fallback."
                             ) from cpu_exc
                     raise RuntimeError(
                         "Transformer generation failed after retry."
@@ -310,10 +425,33 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
             raise RuntimeError("Transformer generation failed.") from exc
 
     def _build_prompt(self, request: GenerateRequest) -> str:
+        import random
+
         base_prompt = (
             self.config.json_system_prompt
             or "You are a question author. Return valid JSON."
         )
+
+        # Add random variation to encourage diversity
+        variation_prompts = [
+            "Create an original question that tests understanding.",
+            "Generate a fresh question covering key concepts.",
+            "Produce a unique question that assesses knowledge.",
+            "Develop a novel question exploring the topic.",
+        ]
+        variation = random.choice(variation_prompts)
+        base_prompt += f"\n\n{variation}"
+
+        # Retrieve relevant context for RAG
+        relevant_chunks = self._retrieve_relevant_chunks(
+            request.focus_concepts, request.subject, max_chunks=3
+        )
+
+        context_text = ""
+        if relevant_chunks:
+            context_texts = [chunk.get("text", "") for chunk in relevant_chunks]
+            context_text = "\n\nRelevant Context:\n" + "\n---\n".join(context_texts)
+            base_prompt += "\n\nUse the provided context to create questions that are grounded in real programming concepts and examples."
 
         if request.item_type == "mcq":
             extra = (
@@ -339,7 +477,7 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
             "item_type": request.item_type,
         }
         return (
-            f"{system_prompt}\n\n"
+            f"{system_prompt}{context_text}\n\n"
             "Follow the schema exactly and ensure choices are relevant.\n"
             "Request: "
             f"{json.dumps(payload)}\n"
@@ -352,6 +490,7 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
             raise ValueError("No JSON object detected in model output.")
         end = text.rfind("}")
         snippet = text[start : end + 1] if end > start else text[start:]
+        snippet = self._normalise_invalid_escapes(snippet)
         try:
             return json.loads(snippet)
         except json.JSONDecodeError:
@@ -361,7 +500,7 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
             raise
 
     def _repair_json(self, snippet: str) -> Optional[Dict[str, Any]]:
-        candidate = snippet
+        candidate = self._normalise_invalid_escapes(snippet)
         while candidate:
             try:
                 return json.loads(candidate)
@@ -378,6 +517,10 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                 if close_braces < open_braces:
                     candidate += "}" * (open_braces - close_braces)
         return None
+
+    @staticmethod
+    def _normalise_invalid_escapes(snippet: str) -> str:
+        return re.sub(r"\\(?![\"\\/bfnrtu])", r"\\\\", snippet)
 
     def _extract_text(self, value: Any) -> Optional[str]:
         if value is None:
@@ -507,6 +650,11 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
         return question
 
     def generate(self, request: GenerateRequest) -> Question:
+        # Retrieve relevant chunks for RAG visualization
+        relevant_chunks = self._retrieve_relevant_chunks(
+            request.focus_concepts, request.subject, max_chunks=3
+        )
+
         prompt = self._build_prompt(request)
         self._logger.debug("Transformer generator prompt: %s", prompt)
         attempts = max(1, int(getattr(self.config, "max_attempts", 1)))
@@ -514,7 +662,9 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
         for attempt in range(attempts):
             try:
                 outputs = self._run_pipeline(prompt)
-            except Exception as exc:  # pragma: no cover - pipeline errors
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - pipeline errors  # noqa: broad-except
                 last_error = exc
                 continue
 
@@ -530,7 +680,9 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
             try:
                 payload = self._parse_json(candidate)
                 question = self._build_question_from_payload(payload)
-            except Exception as exc:  # pragma: no cover - parsing resilience
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - parsing resilience  # noqa: broad-except
                 self._logger.warning(
                     "Failed to parse transformer output on attempt %s: %s",
                     attempt + 1,
@@ -581,8 +733,7 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                 )
                 if not (stem_ok and answer_key_ok):
                     self._logger.warning(
-                        "Transformer produced invalid open response on "
-                        "attempt %s: %s",
+                        "Invalid open response on attempt %s: %s",
                         attempt + 1,
                         candidate,
                     )
@@ -599,7 +750,7 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
                         candidate,
                     )
                     last_error = RuntimeError(
-                        "Transformer output missing answer_key for open " "response."
+                        "Transformer output missing answer_key " "for open response."
                     )
                     continue
 
@@ -607,6 +758,8 @@ class TransformerQuestionGenerator(BaseQuestionGenerator):
             question.meta.bloom = request.bloom_target
             if request.focus_concepts:
                 question.meta.concepts = request.focus_concepts
+            # Add RAG information for visualization
+            question.meta.retrieved_chunks = relevant_chunks
             return question
 
         if last_error is not None:
