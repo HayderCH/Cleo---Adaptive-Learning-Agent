@@ -21,6 +21,7 @@ From passive reading to cognitive, adaptive mastery. A multi-agent educational a
 - **Emotional Support**: Always-available "Analyze my feelings" with personalized AI advice
 - **Progress Tracking**: Mastery levels, calibration, and spaced review scheduling
 - **Memory Optimization**: Single Phi-3.5 model handles multiple tasks efficiently
+- **Personalized Content**: Upload your own PDF courses and documents for custom question generation (coming soon)
 
 ## Architecture Overview
 
@@ -68,11 +69,23 @@ streamlit run services/ui/app.py
 
 Visit `http://localhost:8501` to start learning!
 
+### Google Colab Usage
+
+For online experimentation, you can use the provided Jupyter notebooks in Google Colab:
+
+1. Open [Google Colab](https://colab.research.google.com/)
+2. Upload or clone this repository
+3. Open the notebook files (e.g., `question_generator_demo.ipynb`)
+4. Follow the notebook instructions to run demos
+
+Note: The full production system requires local setup with GPU support for optimal performance.
+
 ## Documentation
 
 - **Presentation Slides**: [PRESENTATION_SLIDES.md](PRESENTATION_SLIDES.md) - Professional slide deck with system architecture and CRISP-DM methodology
 - **Presentation Overview**: [PRESENTATION.md](PRESENTATION.md) - High-level project presentation
 - **RAG Pipeline**: [docs/RAG_PIPELINE.md](docs/RAG_PIPELINE.md) - Detailed RAG implementation guide
+- **User Document Upload Feature**: [docs/features/user-document-upload-rag.md](docs/features/user-document-upload-rag.md) - Specification for personalized content upload
 - **Architecture**: [docs/architecture-option-A.md](docs/architecture-option-A.md)
 - **Current Implementation**: [docs/progress.md](docs/progress.md)
 - **Event Schemas**: [docs/contracts.md](docs/contracts.md)
